@@ -557,9 +557,27 @@ local function checkField(ast, word, start, offset, parent, oop, results)
     checkFieldOfRefs(refs, ast, word, start, offset, parent, oop, results)
 end
 
+local function getParentURI(parent)
+    while parent.parent and parent.parent ~= parent do
+        parent = parent.parent
+    end
+    return parent.uri
+end
+
 local function checkGlobal(ast, word, start, offset, parent, oop, results)
     local locals = guide.getVisibleLocals(ast.ast, offset)
-    local refs = vm.getGlobalSets '*'
+    local parentURI = getParentURI(parent)
+    local refs
+    if type(parentURI) == "string" then
+        refs = {}
+        for _, sources in util.sortPairs(vm.getGlobalSetsOfFile(parentURI)) do
+            for _, source in ipairs(sources) do
+                refs[#refs+1] = source
+            end
+        end
+    else
+        refs = vm.getGlobalSets('*')
+    end
     checkFieldOfRefs(refs, ast, word, start, offset, parent, oop, results, locals, 'global')
 end
 

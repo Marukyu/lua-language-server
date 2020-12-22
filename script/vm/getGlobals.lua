@@ -186,6 +186,10 @@ function vm.getGlobalSets(key)
     return cache
 end
 
+function vm.getGlobalSetsOfFile(uri)
+    return getGlobalSetsOfFile(uri)
+end
+
 files.watch(function (ev, uri)
     if ev == 'update' then
         getGlobalsOfFile(uri)
