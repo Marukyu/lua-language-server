@@ -1,6 +1,16 @@
 local ast = require 'parser.ast'
 
+-- HACK: Transform Synchrony enum declarations to allow treating them as passthrough functions (Lua.runtime.special)
+local substitutes = {
+    ["enum%.%a[%w_]*%s*%{"] = function (str)
+        return str:gsub("%.", "_")
+    end,
+}
+
 return function (self, lua, mode, version, options)
+    for k, v in pairs(substitutes) do
+        lua = lua:gsub(k, v)
+    end
     local errs  = {}
     local diags = {}
     local comms = {}
