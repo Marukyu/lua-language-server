@@ -450,7 +450,7 @@ return function (uri, start, finish, diagnostics)
     local results = {}
 
     checkQuickFix(results, uri, diagnostics)
-    checkSwapParams(results, uri, start, finish)
+    --checkSwapParams(results, uri, start, finish)
     --checkExtractAsFunction(results, uri, start, finish)
 
     return results
