@@ -902,7 +902,7 @@ local function checkLenPlusOne(ast, text, offset, results)
             end
             if source.parent == guide.getParentBlock(source) then
                 -- state
-                local label = text:match('%#[ \t]*', pos) .. nodeText .. '+1'
+                local label = text:match('%#[ \t]*', pos) .. nodeText .. ' + 1'
                 local eq = text:find('^%s*%]?%s*%=', source.finish)
                 local newText = label .. ']'
                 if not eq then
@@ -1132,7 +1132,7 @@ local function tryWord(ast, text, offset, results)
                     checkTableField(ast, word, start, results)
                     local env = guide.getENV(ast.ast, start)
                     checkGlobal(ast, word, start, offset, env, false, results)
-                    checkModule(ast, word, start, results)
+                    --checkModule(ast, word, start, results)
                 end
             end
         end
