@@ -618,14 +618,41 @@ local function checkCommon(word, text, offset, results)
     for _, data in ipairs(keyWordMap) do
         used[data[1]] = true
     end
-    for str, pos in text:gmatch '([%a_][%w_]*)()' do
-        if not used[str] and pos - 1 ~= offset then
-            used[str] = true
-            if matchKey(word, str) then
-                results[#results+1] = {
-                    label = str,
-                    kind  = define.CompletionItemKind.Text,
-                }
+    if config.config.completion.workspaceWord then
+        for uri in files.eachFile() do
+            local cache = files.getCache(uri)
+            if not cache.commonWords then
+                cache.commonWords = {}
+                local mark = {}
+                for str in files.getText(uri):gmatch '([%a_][%w_]*)' do
+                    if not mark[str] then
+                        mark[str] = true
+                        cache.commonWords[#cache.commonWords+1] = str
+                    end
+                end
+            end
+            for _, str in ipairs(cache.commonWords) do
+                if not used[str] and str ~= word then
+                    used[str] = true
+                    if matchKey(word, str) then
+                        results[#results+1] = {
+                            label = str,
+                            kind  = define.CompletionItemKind.Text,
+                        }
+                    end
+                end
+            end
+        end
+    else
+        for str in text:gmatch '([%a_][%w_]*)' do
+            if not used[str] and str ~= word then
+                used[str] = true
+                if matchKey(word, str) then
+                    results[#results+1] = {
+                        label = str,
+                        kind  = define.CompletionItemKind.Text,
+                    }
+                end
             end
         end
     end
@@ -988,6 +1015,9 @@ local function checkTypingEnum(ast, text, offset, infers, str, results)
     end
     local myResults = {}
     mergeEnums(myResults, enums, str)
+    table.sort(myResults, function (a, b)
+        return a.label < b.label
+    end)
     for _, res in ipairs(myResults) do
         results[#results+1] = res
     end
@@ -1284,6 +1314,15 @@ local function getComment(ast, offset)
     return nil
 end
 
+local function getLuaDoc(ast, offset)
+    for _, doc in ipairs(ast.ast.docs) do
+        if offset >= doc.start and offset <= doc.range then
+            return doc
+        end
+    end
+    return nil
+end
+
 local function tryLuaDocCate(line, results)
     local word = line:sub(3)
     for _, docType in ipairs {
@@ -1365,6 +1404,7 @@ local function tryLuaDocBySource(ast, offset, source, results)
                 end
             end
         end
+        return true
     elseif source.type == 'doc.type.name' then
         for _, doc in ipairs(vm.getDocTypes '*') do
             if  (doc.type == 'doc.class.name' or doc.type == 'doc.alias.name')
@@ -1376,6 +1416,7 @@ local function tryLuaDocBySource(ast, offset, source, results)
                 }
             end
         end
+        return true
     elseif source.type == 'doc.param.name' then
         local funcs = {}
         guide.eachSourceBetween(ast.ast, offset, math.huge, function (src)
@@ -1398,7 +1439,9 @@ local function tryLuaDocBySource(ast, offset, source, results)
                 }
             end
         end
+        return true
     end
+    return false
 end
 
 local function tryLuaDocByErr(ast, offset, err, docState, results)
@@ -1464,40 +1507,121 @@ local function tryLuaDocByErr(ast, offset, err, docState, results)
     end
 end
 
-local function tryLuaDocFeatures(line, ast, comm, offset, results)
+local function buildLuaDocOfFunction(func)
+    local index = 1
+    local buf = {}
+    buf[#buf+1] = '${1:comment}'
+    local args = {}
+    local returns = {}
+    if func.args then
+        for _, arg in ipairs(func.args) do
+            args[#args+1] = vm.getInferType(arg)
+        end
+    end
+    if func.returns then
+        for _, rtns in ipairs(func.returns) do
+            for n = 1, #rtns do
+                if not returns[n] then
+                    returns[n] = vm.getInferType(rtns[n])
+                end
+            end
+        end
+    end
+    for n, arg in ipairs(args) do
+        index = index + 1
+        buf[#buf+1] = ('---@param %s ${%d:%s}'):format(
+            func.args[n][1],
+            index,
+            arg
+        )
+    end
+    for _, rtn in ipairs(returns) do
+        index = index + 1
+        buf[#buf+1] = ('---@return ${%d:%s}'):format(
+            index,
+            rtn
+        )
+    end
+    local insertText = table.concat(buf, '\n')
+    return insertText
+end
+
+local function tryLuaDocOfFunction(doc, results)
+    if not doc.bindSources then
+        return
+    end
+    local func
+    for _, source in ipairs(doc.bindSources) do
+        if source.type == 'function' then
+            func = source
+            break
+        end
+    end
+    if not func then
+        return
+    end
+    for _, otherDoc in ipairs(doc.bindGroup) do
+        if otherDoc.type == 'doc.param'
+        or otherDoc.type == 'doc.return' then
+            return
+        end
+    end
+    local insertText = buildLuaDocOfFunction(func)
+    results[#results+1] = {
+        label   = '@param;@return',
+        kind    = define.CompletionItemKind.Snippet,
+        insertTextFormat = 2,
+        filterText   = '---',
+        insertText   = insertText
+    }
 end
 
 local function tryLuaDoc(ast, text, offset, results)
-    local comm = getComment(ast, offset)
-    local line = text:sub(comm.start, offset)
-    if not line then
+    local doc = getLuaDoc(ast, offset)
+    if not doc then
         return
     end
-    if line:sub(1, 2) ~= '-@' then
-        return
-    end
-    -- 尝试 ---@$
-    local cate = line:match('%a*', 3)
-    if #cate + 2 >= #line then
-        tryLuaDocCate(line, results)
-        return
-    end
-    -- 尝试一些其他特征
-    if tryLuaDocFeatures(line, ast, comm, offset, results) then
-        return
+    if doc.type == 'doc.comment' then
+        local line = text:sub(doc.start, doc.range)
+        -- 尝试 ---$
+        if line == '-' then
+            tryLuaDocOfFunction(doc, results)
+            return
+        end
+        -- 尝试 ---@$
+        local cate = line:match('^-@(%a*)$')
+        if cate then
+            tryLuaDocCate(line, results)
+            return
+        end
     end
     -- 根据输入中的source来补全
     local source = getLuaDocByContain(ast, offset)
     if source then
-        tryLuaDocBySource(ast, offset, source, results)
-        return
+        local suc = tryLuaDocBySource(ast, offset, source, results)
+        if suc then
+            return
+        end
     end
     -- 根据附近的错误消息来补全
-    local err, doc = getLuaDocByErr(ast, text, comm.start, offset)
+    local err, expectDoc = getLuaDocByErr(ast, text, doc.start, offset)
     if err then
-        tryLuaDocByErr(ast, offset, err, doc, results)
+        tryLuaDocByErr(ast, offset, err, expectDoc, results)
         return
     end
+end
+
+local function tryComment(ast, text, offset, results)
+    local word = findWord(text, offset)
+    local doc  = getLuaDoc(ast, offset)
+    local line = text:sub(doc.start, offset)
+    if not word then
+        return
+    end
+    if doc and doc.type ~= 'doc.comment' then
+        return
+    end
+    checkCommon(word, text, offset, results)
 end
 
 local function completion(uri, offset)
@@ -1508,6 +1632,7 @@ local function completion(uri, offset)
     if ast then
         if getComment(ast, offset) then
             tryLuaDoc(ast, text, offset, results)
+            tryComment(ast, text, offset, results)
         else
             trySpecial(ast, text, offset, results)
             tryWord(ast, text, offset, results)

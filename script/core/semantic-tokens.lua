@@ -120,6 +120,21 @@ Care['doc.type.name'] = function (source, results)
     end
 end
 
+Care['nonstandardSymbol.comment'] = function (source, results)
+    results[#results+1] = {
+        start  = source.start,
+        finish = source.finish,
+        type   = define.TokenTypes.comment,
+    }
+end
+Care['nonstandardSymbol.continue'] = function (source, results)
+    results[#results+1] = {
+        start  = source.start,
+        finish = source.finish,
+        type   = define.TokenTypes.keyword,
+    }
+end
+
 local function buildTokens(results, text, lines)
     local tokens = {}
     local lastLine = 0
@@ -171,6 +186,16 @@ return function (uri, start, finish)
             await.delay()
         end
     end)
+
+    for _, comm in ipairs(ast.comms) do
+        if comm.semantic then
+            results[#results+1] = {
+                start  = comm.start,
+                finish = comm.finish,
+                type   = define.TokenTypes.comment,
+            }
+        end
+    end
 
     table.sort(results, function (a, b)
         return a.start < b.start

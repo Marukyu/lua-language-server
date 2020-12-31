@@ -11,8 +11,19 @@ return function (uri, callback)
         return
     end
 
+    local cache = vm.getCache 'undefined-field'
+
     local function getAllDocClassFromInfer(src)
-        local infers = vm.getInfers(src, 0)
+        local infers = cache[src]
+        if cache[src] == nil then
+            tracy.ZoneBeginN('undefined-field getInfers')
+            infers = vm.getInfers(src, 0) or false
+            local refs = vm.getRefs(src, 0)
+            for _, ref in ipairs(refs) do
+                cache[ref] = infers
+            end
+            tracy.ZoneEnd()
+        end
 
         if not infers then
             return nil
@@ -29,7 +40,7 @@ return function (uri, callback)
         local allDocClass = {}
         for i = 1, #infers do
             local infer = infers[i]
-            if infer.type ~= '_G' and infer.type ~= 'any' then
+            if infer.type ~= '_G' and infer.type ~= 'any' and infer.type ~= 'table' then
                 local inferSource = infer.source
                 if inferSource.type == 'doc.class' then
                     addTo(allDocClass, inferSource)
@@ -53,7 +64,9 @@ return function (uri, callback)
         local fields = {}
         local empty = true
         for _, docClass in ipairs(allDocClass) do
-            local refs = vm.getFieldsOfDocClassAnyNotGet(docClass)
+            tracy.ZoneBeginN('undefined-field getDefFields')
+            local refs = vm.getDefFields(docClass)
+            tracy.ZoneEnd()
 
             for _, ref in ipairs(refs) do
                 local name = vm.getKeyName(ref)

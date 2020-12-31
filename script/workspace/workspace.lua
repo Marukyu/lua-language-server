@@ -29,7 +29,7 @@ function m.init(uri)
     end
     m.uri  = uri
     m.path = m.normalize(furi.decode(uri))
-    local logPath = ROOT / 'log' / (uri:gsub('[/:]+', '_') .. '.log')
+    local logPath = fs.path(LOGPATH) / (uri:gsub('[/:]+', '_') .. '.log')
     log.info('Log path: ', logPath)
     log.init(ROOT, logPath)
 end
@@ -66,7 +66,7 @@ function m.getNativeMatcher()
     if not m.path then
         return nil
     end
-    if m.nativeVersion == config.version then
+    if m.nativeMatcher then
         return m.nativeMatcher
     end
 
@@ -128,7 +128,7 @@ end
 
 --- 创建代码库筛选器
 function m.getLibraryMatchers()
-    if m.libraryVersion == config.version then
+    if m.libraryMatchers then
         return m.libraryMatchers
     end
 
@@ -191,11 +191,16 @@ local function loadFileFactory(root, progress, isLibrary)
         progress.max = progress.max + 1
         pub.task('loadFile', uri, function (text)
             progress.read = progress.read + 1
-            --log.info(('Preload file at: %s , size = %.3f KB'):format(uri, #text / 1000.0))
-            if isLibrary then
-                files.setLibraryPath(uri, root)
+            if text then
+                log.info(('Preload file at: %s , size = %.3f KB'):format(uri, #text / 1000.0))
+                if isLibrary then
+                    log.info('++++As library of:', root)
+                    files.setLibraryPath(uri, root)
+                end
+                files.setText(uri, text)
+            else
+                files.remove(uri)
             end
-            files.setText(uri, text)
         end)
     end
 end
@@ -239,6 +244,8 @@ end
 function m.awaitPreload()
     await.close 'preload'
     await.setID 'preload'
+    m.libraryMatchers = nil
+    m.nativeMatcher   = nil
     local progress = {
         max     = 0,
         read    = 0,
@@ -249,10 +256,12 @@ function m.awaitPreload()
     local native          = m.getNativeMatcher()
     local librarys        = m.getLibraryMatchers()
     if native then
+        log.info('Scan files at:', m.path)
         native:scan(m.path, nativeLoader)
     end
     for _, library in ipairs(librarys) do
         local libraryLoader = loadFileFactory(library.path, progress, true)
+        log.info('Scan library at:', library.path)
         library.matcher:scan(library.path, libraryLoader)
     end
 
